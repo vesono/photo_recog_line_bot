@@ -1,6 +1,7 @@
 ### line bot用lambda関数定義
 # ライブラリ読みこみ 
 import os
+import boto3
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
