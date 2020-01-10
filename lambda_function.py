@@ -34,12 +34,12 @@ def rtn_string(rp_key, detect_res):
         if type(detect_res[rp_key]) == dict:
             values = detect_res[rp_key][item]
             k_value = str(round(values, 2)) + '%' if type(values)==float else str(values)
-            rtn_str = rtn_str + '\n' + '      ' + item + '：' + k_value
+            rtn_str = rtn_str + '\n' + '    ' + item + '：' + k_value
         else:
             for keys in item:
                 values = item[keys]
                 k_value = str(round(values, 2)) + '%' if type(values)==float else str(values)
-                rtn_str = rtn_str + '\n' + '      ' + keys + '：' + k_value
+                rtn_str = rtn_str + '\n' + '    ' + keys + '：' + k_value
     return rtn_str
 
 # 日本語変換
@@ -47,12 +47,12 @@ def rep_jpn(text):
     jpn_txt = text
     jpn_txt = jpn_txt.replace('Value：', '')
     jpn_txt = jpn_txt.replace('Low', '')
-    jpn_txt = jpn_txt.replace('Gender', '・性別予想')
+    jpn_txt = jpn_txt.replace('Gender', '【性別予想】')
     jpn_txt = jpn_txt.replace('Female', '女性')
-    jpn_txt = jpn_txt.replace('male', '・男性')
-    jpn_txt = jpn_txt.replace('AgeRange', '・年齢予想')
-    jpn_txt = jpn_txt.replace('Smile', '・笑顔かどうか')
-    jpn_txt = jpn_txt.replace('Emotions', '・感情')
+    jpn_txt = jpn_txt.replace('male', '男性')
+    jpn_txt = jpn_txt.replace('AgeRange', '【年齢予想】')
+    jpn_txt = jpn_txt.replace('Smile', '【笑顔？】')
+    jpn_txt = jpn_txt.replace('Emotions', '【感情】')
     jpn_txt = jpn_txt.replace('Type：CONFUSED', '困惑')
     jpn_txt = jpn_txt.replace('Type：ANGRY', '怒り')
     jpn_txt = jpn_txt.replace('Type：FEAR', '恐怖')
