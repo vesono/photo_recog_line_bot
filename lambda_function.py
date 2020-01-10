@@ -47,7 +47,7 @@ def lambda_handler(event, context):
         # s3へ画像を保存
         now = now_time()
         s3_filepath = 'pic/' + now + '_lbot_image' + '.jpg'
-        s3c.put_object(Bucket='photo-recog-line-bot', Body=image,  Key=s3_filepath)
+        s3c.put_object(Bucket='photo-recog-line-bot', Body=image, Key=s3_filepath)
         # rekognitionで画像認識
         response = rekognition.detect_faces(
                 Image={
@@ -61,6 +61,7 @@ def lambda_handler(event, context):
                 ]
             )
         # CloudWatch出力用
+        print(s3_filepath)
         print(response)
         # リプライメッセージ作成
         rtn_dict = response['FaceDetails'][0]
