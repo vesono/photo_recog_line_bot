@@ -2,16 +2,17 @@
 # ライブラリ読みこみ 
 import os
 import datetime
+import json
 from io import BytesIO
 import boto3
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMessage
 
-# s3設定
 s3r = boto3.resource('s3')
 bucket = s3r.Bucket('photo-recog-line-bot')
 s3c = boto3.client('s3')
+rekognition = boto3.client('rekognition')
 
 # LineBotApiインスタンスの作成
 # CHANNEL_ACCESS_TOKEN: 各API通信を行うときに使用
@@ -34,16 +35,6 @@ def lambda_handler(event, context):
         line_bot_api.reply_message(
             line_event.reply_token,
             TextSendMessage(text=line_event.message.text))
-        # # s3保存処理(tmpにファイル作成 ⇒ s3に保存)
-        # now = now_time()
-        # name_tmpfile = now + '_lbot_text'
-        # path_tmpfile = '/tmp/' + name_tmpfile + '.txt'
-        # tmpfile = open(path_tmpfile,'w')
-        # tmpfile.write(line_event.message.text)
-        # tmpfile.close()
-        # bucket.upload_file(path_tmpfile, 'test/' + name_tmpfile + '.txt')
-        # # tmpファイル削除
-        # os.remove(path_tmpfile)
 
     # 画像メッセージの場合は画像をs3に保存
     @handler.add(MessageEvent, message=ImageMessage)
@@ -53,13 +44,35 @@ def lambda_handler(event, context):
         message_content = line_bot_api.get_message_content(message_id)
         image_bin = BytesIO(message_content.content)
         image = image_bin.getvalue()
-        # S3へ画像を保存
+        # s3へ画像を保存
         now = now_time()
         s3_filepath = 'pic/' + now + '_lbot_image' + '.jpg'
         s3c.put_object(Bucket='photo-recog-line-bot', Body=image,  Key=s3_filepath)
-
-    # debug
-    print(event)
+        # rekognitionで画像認識
+        response = rekognition.detect_faces(
+                Image={
+                    'S3Object': {
+                        'Bucket': 'photo-recog-line-bot',
+                        'Name': s3_filepath,
+                    }
+                },
+                Attributes=[
+                    'ALL',
+                ]
+            )
+        # CloudWatch出力用
+        print(response)
+        # リプライメッセージ作成
+        rtn_dict = response['FaceDetails'][0]
+        get_keys = ['Gender', 'AgeRange', 'Smile', 'Emotions']
+        rtn_text = {}
+        for g_key in get_keys:
+            rtn_text[g_key] = rtn_dict[g_key]
+        rtn_json = json.dumps(rtn_text, indent=2)
+        # リプライ処理
+        line_bot_api.reply_message(
+            line_event.reply_token,
+            TextSendMessage(text=rtn_json))
 
     ### レスポンスの関数呼び出しとリクエストの署名検証
     # get X-Line-Signature header value
