@@ -27,6 +27,21 @@ def now_time():
     now = datetime.datetime.today()
     return now.strftime("%Y%m%d%H%M%S") + str(now.microsecond)
 
+# メッセージ加工関数
+def rtn_string(rp_key, detect_res):
+    rtn_str = rp_key
+    for item in detect_res[rp_key]:
+        if type(detect_res[rp_key]) == dict:
+            values = detect_res[rp_key][item]
+            k_value = round(values, 2) if type(values)==float else values
+            rtn_str = rtn_str + '\n' + '  ' + item + '：' + str(k_value)
+        else:
+            for keys in item:
+                values = item[keys]
+                k_value = round(values, 2) if type(values)==float else values
+                rtn_str = rtn_str + '\n' + '  ' + keys + '：' + str(k_value)
+    return rtn_str
+
 def lambda_handler(event, context):
     ### イベントごとに関数を定義
     # テキストメッセージの場合、オウム返しする
@@ -48,6 +63,7 @@ def lambda_handler(event, context):
         now = now_time()
         s3_filepath = 'pic/' + now + '_lbot_image' + '.jpg'
         s3c.put_object(Bucket='photo-recog-line-bot', Body=image, Key=s3_filepath)
+
         # rekognitionで画像認識
         response = rekognition.detect_faces(
                 Image={
@@ -60,20 +76,25 @@ def lambda_handler(event, context):
                     'ALL',
                 ]
             )
+
         # CloudWatch出力用
         print(s3_filepath)
         print(response)
+
         # リプライメッセージ作成
         rtn_dict = response['FaceDetails'][0]
         get_keys = ['Gender', 'AgeRange', 'Smile', 'Emotions']
         rtn_text = {}
         for g_key in get_keys:
             rtn_text[g_key] = rtn_dict[g_key]
-        rtn_json = json.dumps(rtn_text, indent=2)
+        # rtn_json = json.dumps(rtn_text, indent=2)
+        rekog_return = rtn_string('Gender', rtn_text) + '\n' + rtn_string('AgeRange', rtn_text) + '\n' + \
+                       rtn_string('Smile', rtn_text) + '\n' + rtn_string('Emotions', rtn_text)
+
         # リプライ処理
         line_bot_api.reply_message(
             line_event.reply_token,
-            TextSendMessage(text=rtn_json))
+            TextSendMessage(text=rekog_return))
 
     ### レスポンスの関数呼び出しとリクエストの署名検証
     # get X-Line-Signature header value
