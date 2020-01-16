@@ -3,6 +3,7 @@
 import os
 import datetime
 import json
+from decimal import *
 from io import BytesIO
 import boto3
 from linebot import LineBotApi, WebhookHandler
@@ -13,6 +14,8 @@ s3r = boto3.resource('s3')
 bucket = s3r.Bucket('photo-recog-line-bot')
 s3c = boto3.client('s3')
 rekognition = boto3.client('rekognition')
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('result_photo_linebot')
 
 # LineBotApiインスタンスの作成
 # CHANNEL_ACCESS_TOKEN: 各API通信を行うときに使用
@@ -83,7 +86,8 @@ def lambda_handler(event, context):
         image = image_bin.getvalue()
         # s3へ画像を保存
         now = now_time()
-        s3_filepath = 'pic/' + now + '_lbot_image' + '.jpg'
+        s3_filename = now + '_lbot_image'
+        s3_filepath = 'pic/' + s3_filename + '.jpg'
         s3c.put_object(Bucket='photo-recog-line-bot', Body=image, Key=s3_filepath)
         # rekognitionで画像認識
         response = rekognition.detect_faces(
@@ -97,15 +101,50 @@ def lambda_handler(event, context):
                     'ALL',
                 ]
             )
-        # リプライメッセージ作成
         rtn_dict = response['FaceDetails'][0]
         # CloudWatch出力
-        print(s3_filepath)
+        print(s3_filename)
         print(rtn_dict)
+        # 必要な分だけ抽出
         get_keys = ['Gender', 'AgeRange', 'Smile', 'Emotions']
         rtn_text = {}
         for g_key in get_keys:
             rtn_text[g_key] = rtn_dict[g_key]
+        
+        # DynamoDB登録
+        # DynamoDB登録用にdictを加工
+        db_insert_json = {}
+        db_insert_json['photo_name'] = s3_filename
+        db_insert_json['No'] = 0
+        for key1 in rtn_text:
+            if key1 == 'Gender':
+                for key2 in rtn_text[key1]:
+                    if key2 == 'Value':
+                        db_insert_json['Gender'] = rtn_text[key1][key2]
+                    elif key2 == 'Confidence':
+                        db_insert_json['Gender_prob'] = rtn_text[key1][key2]
+            elif key1 == 'AgeRange':
+                for key2 in rtn_text[key1]:
+                    if key2 == 'Low':
+                        db_insert_json['Age_low'] = rtn_text[key1][key2]
+                    elif key2 == 'High':
+                        db_insert_json['Age_high'] = rtn_text[key1][key2]
+            elif key1 == 'Smile':
+                for key2 in rtn_text[key1]:
+                    if key2 == 'Value':
+                        db_insert_json['Smile'] = rtn_text[key1][key2]
+                    elif key2 == 'Confidence':
+                        db_insert_json['Smile_prob'] = rtn_text[key1][key2]
+            elif key1 == 'Emotions':
+                for key2 in rtn_text[key1]:
+                    db_insert_json[key2['Type']] = key2['Confidence']
+        # Float to Decimal
+        db_insert_json = json.loads(json.dumps(db_insert_json), parse_float=Decimal)
+        # insert
+        with table.batch_writer() as batch:
+            batch.put_item(Item=db_insert_json)
+
+        # replyメッセージ作成
         rtn_text['AgeRange']['Low'] = int((rtn_text['AgeRange']['Low'] + rtn_text['AgeRange']['High']) / 2)
         del rtn_text['AgeRange']['High']
         rekog_return = rtn_string('Gender', rtn_text) + '\n' + rtn_string('AgeRange', rtn_text) + '\n' + \
