@@ -9,7 +9,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMessage
+from linebot.models import MessageEvent, FollowEvent, TextMessage, TextSendMessage, ImageMessage
 
 s3r = boto3.resource('s3')
 bucket = s3r.Bucket('photo-recog-line-bot')
@@ -71,6 +71,14 @@ def template_rep(str_num, str, rep_str):
 
 def lambda_handler(event, context):
     ### イベントごとに関数を定義
+    # 友達追加時のイベント
+    @handler.add(FollowEvent)
+    def handle_follow(line_event):
+        line_bot_api.reply_message(
+            line_event.reply_token,
+            TextSendMessage(text='友達追加ありがとう！'),
+            TextSendMessage(text='写真を投稿すると諸々分析した結果が返ってくるよ！'))
+
     # テキストメッセージの場合、オウム返しする
     @handler.add(MessageEvent, message=TextMessage)
     def handle_message(line_event):
