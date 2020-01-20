@@ -9,11 +9,12 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, FollowEvent, TextMessage, TextSendMessage, ImageMessage
+from linebot.models import MessageEvent, FollowEvent, TextMessage, TextSendMessage, ImageMessage, ImageSendMessage
 
 s3r = boto3.resource('s3')
-bucket = s3r.Bucket('photo-recog-line-bot')
 s3c = boto3.client('s3')
+s3_bucketname = 'photo-recog-line-bot'
+bucket = s3r.Bucket(s3_bucketname)
 rekognition = boto3.client('rekognition')
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('result_photo_linebot')
@@ -100,13 +101,24 @@ def lambda_handler(event, context):
         now = now_time()
         s3_filename = now + '_lbot_image'
         s3_filepath = 'pic/' + s3_filename + '.jpg'
-        s3c.put_object(Bucket='photo-recog-line-bot', Body=image, Key=s3_filepath)
+        s3c.put_object(Bucket=s3_bucketname, Body=image, Key=s3_filepath)
+
+        # URL取得
+        s3_image_url = s3c.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': s3_bucketname,
+                'Key': s3_filepath
+            },
+            ExpiresIn=60,
+            HttpMethod='GET'
+        )
 
         # rekognitionで画像認識
         response = rekognition.detect_faces(
                 Image={
                     'S3Object': {
-                        'Bucket': 'photo-recog-line-bot',
+                        'Bucket': s3_bucketname,
                         'Name': s3_filepath,
                     }
                 },
@@ -118,80 +130,104 @@ def lambda_handler(event, context):
         # CloudWatch出力
         print(response)
 
-        get_keys = ['BoundingBox', 'Gender', 'AgeRange', 'Smile', 'Emotions']
-        face_index = -1
-        for rtn_dict in response['FaceDetails']:
-            # インクリメント、初期化
-            face_index += 1
-            rtn_text = {}
-            # 必要な分だけ抽出
-            for g_key in get_keys:
-                rtn_text[g_key] = rtn_dict[g_key]
-        
-            # DynamoDB登録
-            # DynamoDB登録用にdict加工
-            db_insert_json = {}
-            db_insert_json['photo_name'] = s3_filename
-            db_insert_json['No'] = face_index
-            db_insert_json['userid'] = line_event.source.user_id
-            db_insert_json['line_name'] = profile.display_name
-            for key1 in rtn_text:
-                if  key1 == 'BoundingBox':
-                    for key2 in rtn_text[key1]:
-                        db_insert_json['BoundingBox' + '_' + key2] = rtn_text[key1][key2]
-                elif key1 == 'Gender':
-                    for key2 in rtn_text[key1]:
-                        if key2 == 'Value':
-                            db_insert_json['Gender'] = rtn_text[key1][key2]
-                        elif key2 == 'Confidence':
-                            db_insert_json['Gender_prob'] = rtn_text[key1][key2]
-                elif key1 == 'AgeRange':
-                    for key2 in rtn_text[key1]:
-                        if key2 == 'Low':
-                            db_insert_json['Age_low'] = rtn_text[key1][key2]
-                        elif key2 == 'High':
-                            db_insert_json['Age_high'] = rtn_text[key1][key2]
-                elif key1 == 'Smile':
-                    for key2 in rtn_text[key1]:
-                        if key2 == 'Value':
-                            db_insert_json['Smile'] = rtn_text[key1][key2]
-                        elif key2 == 'Confidence':
-                            db_insert_json['Smile_prob'] = rtn_text[key1][key2]
-                elif key1 == 'Emotions':
-                    for key2 in rtn_text[key1]:
-                        db_insert_json[key2['Type']] = key2['Confidence']
-            # Float to Decimal
-            db_insert_json = json.loads(json.dumps(db_insert_json), parse_float=Decimal)
-            # insert
-            with table.batch_writer() as batch:
-                batch.put_item(Item=db_insert_json)
+        # 写真に写る人数が3人以内の時にDB登録してレスポンスする
+        if len(response['FaceDetails'])<=3 :
+            get_keys = ['BoundingBox', 'Gender', 'AgeRange', 'Smile', 'Emotions']
+            face_index = 0
+            for rtn_dict in response['FaceDetails']:
+                # インクリメント、初期化
+                face_index += 1
+                rtn_text = {}
+                # 必要な分だけ抽出
+                for g_key in get_keys:
+                    rtn_text[g_key] = rtn_dict[g_key]
+            
+                # DynamoDB登録
+                # DynamoDB登録用にdict加工
+                db_insert_json = {}
+                db_insert_json['photo_name'] = s3_filename
+                db_insert_json['No'] = face_index
+                db_insert_json['userid'] = line_event.source.user_id
+                db_insert_json['line_name'] = profile.display_name
+                for key1 in rtn_text:
+                    if  key1 == 'BoundingBox':
+                        for key2 in rtn_text[key1]:
+                            db_insert_json['BoundingBox' + '_' + key2] = rtn_text[key1][key2]
+                    elif key1 == 'Gender':
+                        for key2 in rtn_text[key1]:
+                            if key2 == 'Value':
+                                db_insert_json['Gender'] = rtn_text[key1][key2]
+                            elif key2 == 'Confidence':
+                                db_insert_json['Gender_prob'] = rtn_text[key1][key2]
+                    elif key1 == 'AgeRange':
+                        for key2 in rtn_text[key1]:
+                            if key2 == 'Low':
+                                db_insert_json['Age_low'] = rtn_text[key1][key2]
+                            elif key2 == 'High':
+                                db_insert_json['Age_high'] = rtn_text[key1][key2]
+                    elif key1 == 'Smile':
+                        for key2 in rtn_text[key1]:
+                            if key2 == 'Value':
+                                db_insert_json['Smile'] = rtn_text[key1][key2]
+                            elif key2 == 'Confidence':
+                                db_insert_json['Smile_prob'] = rtn_text[key1][key2]
+                    elif key1 == 'Emotions':
+                        for key2 in rtn_text[key1]:
+                            db_insert_json[key2['Type']] = key2['Confidence']
+                # Float to Decimal
+                db_insert_json = json.loads(json.dumps(db_insert_json), parse_float=Decimal)
+                # insert
+                with table.batch_writer() as batch:
+                    batch.put_item(Item=db_insert_json)
+    
+            # reply用list
+            reply_list = []
+            # DynamoDBより取得
+            resp = table.query(KeyConditionExpression=Key('photo_name').eq(s3_filename))
+            for item in resp['Items']:
+                reply_text = reply_template
+                gender_jpn = '男性' if item['Gender'] == 'Male' else '女性'
+                reply_text = template_rep('0', reply_text, gender_jpn)
+                reply_text = template_rep('1', reply_text, str(round(item['Gender_prob'], 2)))
+                reply_text = template_rep('2', reply_text, str((item['Age_low'] + item['Age_high'])/2))
+                reply_text = template_rep('3', reply_text, str(round(item['CONFUSED'], 2)))
+                reply_text = template_rep('4', reply_text, str(round(item['ANGRY'], 2)))
+                reply_text = template_rep('5', reply_text, str(round(item['FEAR'], 2)))
+                reply_text = template_rep('6', reply_text, str(round(item['SURPRISED'], 2)))
+                reply_text = template_rep('7', reply_text, str(round(item['HAPPY'], 2)))
+                reply_text = template_rep('8', reply_text, str(round(item['SAD'], 2)))
+                reply_text = template_rep('9', reply_text, str(round(item['CALM'], 2)))
+                reply_text = template_rep('10', reply_text, str(round(item['DISGUSTED'], 2)))
+                reply_list.append(reply_text)
 
-        # reply用list
-        reply_list = []
-        # DynamoDBより取得
-        resp = table.query(KeyConditionExpression=Key('photo_name').eq(s3_filename))
-        for item in resp['Items']:
-            print(item)
-            reply_text = reply_template
-            gender_jpn = '男性' if item['Gender'] == 'Male' else '女性'
-            reply_text = template_rep('0', reply_text, gender_jpn)
-            reply_text = template_rep('1', reply_text, str(round(item['Gender_prob'], 2)))
-            reply_text = template_rep('2', reply_text, str((item['Age_low'] + item['Age_high'])/2))
-            reply_text = template_rep('3', reply_text, str(round(item['CONFUSED'], 2)))
-            reply_text = template_rep('4', reply_text, str(round(item['ANGRY'], 2)))
-            reply_text = template_rep('5', reply_text, str(round(item['FEAR'], 2)))
-            reply_text = template_rep('6', reply_text, str(round(item['SURPRISED'], 2)))
-            reply_text = template_rep('7', reply_text, str(round(item['HAPPY'], 2)))
-            reply_text = template_rep('8', reply_text, str(round(item['SAD'], 2)))
-            reply_text = template_rep('9', reply_text, str(round(item['CALM'], 2)))
-            reply_text = template_rep('10', reply_text, str(round(item['DISGUSTED'], 2)))
-            reply_list.append(reply_text)
-
-        print(reply_list)
-        # リプライ処理
-        line_bot_api.reply_message(
-            line_event.reply_token,
-            TextSendMessage(text=reply_text))
+            send_reply_list=[]
+            send_dict_image={}
+            send_dict_text={}
+            send_dict_image['type'] = 'image'
+            send_dict_image['originalContentUrl'] = s3_image_url
+            send_dict_image['previewImageUrl'] = s3_image_url
+            send_dict_text['type'] = 'text'
+            send_dict_text['text'] = reply_text
+            send_reply_list.append(send_dict_image)
+            send_reply_list.append(send_dict_text)
+            send_reply_json = json.dumps(send_reply_list)
+            print(send_reply_json)
+            print(ImageSendMessage(
+                    original_content_url=s3_image_url,
+                    preview_image_url=s3_image_url
+                ))
+            print(TextSendMessage(text=reply_text))
+            # リプライ処理
+            line_bot_api.reply_message(
+                reply_token=line_event.reply_token,
+                messages=TextSendMessage(text=reply_text))
+        else:
+            # 4人以上の場合はs3から写真を削除
+            s3c.delete_object(Bucket=s3_bucketname, Key=s3_filepath)
+            # リプライ処理
+            line_bot_api.reply_message(
+                line_event.reply_token,
+                TextSendMessage(text='写真に写る人数は3人以内に！'))
 
     ### レスポンスの関数呼び出しとリクエストの署名検証
     # get X-Line-Signature header value
@@ -206,5 +242,5 @@ def lambda_handler(event, context):
         abort(400)
     # handleの処理を終えればOKを返す
     return 'OK'
-  
+
 # end of file
