@@ -4,7 +4,9 @@ import os
 import datetime
 import json
 from decimal import *
+import io
 from io import BytesIO
+from PIL import Image, ImageDraw, ExifTags, ImageColor
 import boto3
 from boto3.dynamodb.conditions import Key
 from linebot import LineBotApi, WebhookHandler
