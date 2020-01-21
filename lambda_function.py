@@ -14,6 +14,7 @@ from linebot.models import MessageEvent, FollowEvent, TextMessage, TextSendMessa
 s3r = boto3.resource('s3')
 s3c = boto3.client('s3')
 s3_bucketname = 'photo-recog-line-bot'
+s3_pub_bucketname = os.getenv('PUBLIC_S3_BUCKETNAME', None)
 bucket = s3r.Bucket(s3_bucketname)
 rekognition = boto3.client('rekognition')
 dynamodb = boto3.resource('dynamodb')
@@ -103,17 +104,6 @@ def lambda_handler(event, context):
         s3_filepath = 'pic/' + s3_filename + '.jpg'
         s3c.put_object(Bucket=s3_bucketname, Body=image, Key=s3_filepath)
 
-        # URL取得
-        s3_image_url = s3c.generate_presigned_url(
-            ClientMethod='get_object',
-            Params={
-                'Bucket': s3_bucketname,
-                'Key': s3_filepath
-            },
-            ExpiresIn=60,
-            HttpMethod='GET'
-        )
-
         # rekognitionで画像認識
         response = rekognition.detect_faces(
                 Image={
@@ -132,6 +122,13 @@ def lambda_handler(event, context):
 
         # 写真に写る人数が3人以内の時にDB登録してレスポンスする
         if len(response['FaceDetails'])<=3 :
+            # 画像処理
+            # public権限でs3追加
+            s3_pub_filename = now + '_lbot_image_pub.jpg'
+            s3c.put_object(ACL='public-read', Bucket=s3_pub_bucketname, Body=image, Key=s3_pub_filename)
+            s3_pub_url = 'https://' + s3_pub_bucketname + '.s3-ap-northeast-1.amazonaws.com/' + s3_pub_filename
+
+            # json抽出、DynamoDB追加
             get_keys = ['BoundingBox', 'Gender', 'AgeRange', 'Smile', 'Emotions']
             face_index = 0
             for rtn_dict in response['FaceDetails']:
@@ -200,27 +197,29 @@ def lambda_handler(event, context):
                 reply_text = template_rep('10', reply_text, str(round(item['DISGUSTED'], 2)))
                 reply_list.append(reply_text)
 
-            send_reply_list=[]
-            send_dict_image={}
-            send_dict_text={}
-            send_dict_image['type'] = 'image'
-            send_dict_image['originalContentUrl'] = s3_image_url
-            send_dict_image['previewImageUrl'] = s3_image_url
-            send_dict_text['type'] = 'text'
-            send_dict_text['text'] = reply_text
-            send_reply_list.append(send_dict_image)
-            send_reply_list.append(send_dict_text)
-            send_reply_json = json.dumps(send_reply_list)
-            print(send_reply_json)
-            print(ImageSendMessage(
-                    original_content_url=s3_image_url,
-                    preview_image_url=s3_image_url
-                ))
-            print(TextSendMessage(text=reply_text))
+            # bot用リプライリスト作成
+            reply_message_list = []
+            reply_message_list.append(
+                ImageSendMessage(
+                        original_content_url=s3_pub_url,
+                        preview_image_url=s3_pub_url
+                ),
+            )
+            if len(response['FaceDetails'])==1:
+                reply_message_list.append(TextSendMessage(text=reply_list[0]))
+            elif len(response['FaceDetails'])==2:
+                reply_message_list.append(TextSendMessage(text=reply_list[0]))
+                reply_message_list.append(TextSendMessage(text=reply_list[1]))
+            else:
+                reply_message_list.append(TextSendMessage(text=reply_list[0]))
+                reply_message_list.append(TextSendMessage(text=reply_list[1]))
+                reply_message_list.append(TextSendMessage(text=reply_list[2]))
+            print(reply_message_list)
             # リプライ処理
             line_bot_api.reply_message(
                 reply_token=line_event.reply_token,
-                messages=TextSendMessage(text=reply_text))
+                messages=reply_message_list
+            )
         else:
             # 4人以上の場合はs3から写真を削除
             s3c.delete_object(Bucket=s3_bucketname, Key=s3_filepath)
