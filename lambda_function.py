@@ -44,6 +44,7 @@ def now_time():
 
 # リプライ用テンプレート
 reply_template = '''\
+({11}色)
 【性別】
     {0}
     (確率:{1}％)
@@ -125,10 +126,11 @@ def lambda_handler(event, context):
         # 写真に写る人数が3人以内の時にDB登録してレスポンスする
         if len(response['FaceDetails'])<=3 :
             # 画像処理
-            # public権限でs3追加
-            s3_pub_filename = now + '_lbot_image_pub.jpg'
-            s3c.put_object(ACL='public-read', Bucket=s3_pub_bucketname, Body=image, Key=s3_pub_filename)
-            s3_pub_url = 'https://' + s3_pub_bucketname + '.s3-ap-northeast-1.amazonaws.com/' + s3_pub_filename
+            pil_img = Image.open(image_bin)
+            # サイズ取得
+            imgWidth, imgHeight = pil_img.size
+            # draw object作成
+            draw = ImageDraw.Draw(pil_img)
 
             # json抽出、DynamoDB追加
             get_keys = ['BoundingBox', 'Gender', 'AgeRange', 'Smile', 'Emotions']
@@ -137,7 +139,8 @@ def lambda_handler(event, context):
                 # インクリメント、初期化
                 face_index += 1
                 rtn_text = {}
-                # 必要な分だけ抽出
+
+                # rekognitionの結果から必要な分だけ抽出
                 for g_key in get_keys:
                     rtn_text[g_key] = rtn_dict[g_key]
             
@@ -184,6 +187,7 @@ def lambda_handler(event, context):
             # DynamoDBより取得
             resp = table.query(KeyConditionExpression=Key('photo_name').eq(s3_filename))
             for item in resp['Items']:
+                # テンプレート置換
                 reply_text = reply_template
                 gender_jpn = '男性' if item['Gender'] == 'Male' else '女性'
                 reply_text = template_rep('0', reply_text, gender_jpn)
@@ -197,7 +201,41 @@ def lambda_handler(event, context):
                 reply_text = template_rep('8', reply_text, str(round(item['SAD'], 2)))
                 reply_text = template_rep('9', reply_text, str(round(item['CALM'], 2)))
                 reply_text = template_rep('10', reply_text, str(round(item['DISGUSTED'], 2)))
+
+                # image draw
+                left = imgWidth * item['BoundingBox_Left']
+                top = imgHeight * item['BoundingBox_Top']
+                width = imgWidth * item['BoundingBox_Width']
+                height = imgHeight * item['BoundingBox_Height']
+                points = (
+                    (left, top),
+                    (left + width, top),
+                    (left + width, top + height),
+                    (left , top + height),
+                    (left, top)
+                )
+                
+                # 色わけ、値わけ
+                if item['No'] == 1:
+                    face_rekog_color = '赤'
+                    draw.line(points, fill=(255, 0, 0), width=2)
+                elif item['No'] == 2:
+                    face_rekog_color = '緑'
+                    draw.line(points, fill=(0, 255, 0), width=2)
+                else:
+                    face_rekog_color = '青'
+                    draw.line(points, fill=(0, 0, 255), width=2)
+
+                reply_text = template_rep('11', reply_text, face_rekog_color)
                 reply_list.append(reply_text)
+
+            # public権限でs3追加
+            output = io.BytesIO()
+            pil_img.save(output, format='JPEG')
+            pub_image_value = output.getvalue()
+            s3_pub_filename = now + '_lbot_image_pub.jpg'
+            s3c.put_object(ACL='public-read', Bucket=s3_pub_bucketname, Body=pub_image_value, Key=s3_pub_filename)
+            s3_pub_url = 'https://' + s3_pub_bucketname + '.s3-ap-northeast-1.amazonaws.com/' + s3_pub_filename
 
             # bot用リプライリスト作成
             reply_message_list = []
