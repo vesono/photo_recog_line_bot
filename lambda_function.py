@@ -218,13 +218,13 @@ def lambda_handler(event, context):
                 # 色わけ、値わけ
                 if item['No'] == 1:
                     face_rekog_color = '赤'
-                    draw.line(points, fill=(255, 0, 0), width=2)
+                    draw.line(points, fill=(255, 0, 0), width=4)
                 elif item['No'] == 2:
                     face_rekog_color = '緑'
-                    draw.line(points, fill=(0, 255, 0), width=2)
+                    draw.line(points, fill=(0, 255, 0), width=4)
                 else:
                     face_rekog_color = '青'
-                    draw.line(points, fill=(0, 0, 255), width=2)
+                    draw.line(points, fill=(0, 0, 255), width=4)
 
                 reply_text = template_rep('11', reply_text, face_rekog_color)
                 reply_list.append(reply_text)
